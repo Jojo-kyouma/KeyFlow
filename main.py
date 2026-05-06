@@ -83,6 +83,7 @@ class KeyFlowState:
         self.num_songs = 10000
         self.buffer_max_length = 300
         self.text_buffer = ""
+        self.ctrl_a_pending = False
         self.pressed_keys = set()
         self.sync_in_progress = False
         self.last_key_time = time.time()
@@ -178,7 +179,7 @@ class KeyFlowState:
         with self._lock:
             self.last_key_time = time.time()
             char_to_add = ""
-            if hasattr(key, 'char') and key.char is not None:
+            if hasattr(key, 'char') and key.char is not None and ord(key.char) >= 32:
                 char_to_add = key.char
             elif key == keyboard.Key.space: char_to_add = " "
             elif key == keyboard.Key.enter: char_to_add = "\n"
@@ -202,6 +203,14 @@ class KeyFlowState:
         """Safely clears the text buffer."""
         with self._lock:
             self.text_buffer = ""
+
+    def delete_last_word(self):
+        """Deletes the last word from the text buffer (CTRL+BACKSPACE behavior)."""
+        with self._lock:
+            text = self.text_buffer.rstrip(' ')
+            idx = max(text.rfind(' '), text.rfind('\n'))
+            self.text_buffer = text[:idx + 1] if idx >= 0 else ""
+            return self.text_buffer
 
     def consume_buffer(self):
         """Returns the current buffer and clears it atomically."""
@@ -274,7 +283,7 @@ INJECTED_JS = """
             fontFamily: 'monospace', borderRadius: '8px', border: '1px solid #444',
             overflowY: 'auto', cursor: 'default', whiteSpace: 'pre-wrap', pointerEvents: 'auto'
         });
-        div.innerText = '> KeyFlow Active (Hover to capture keys) \\n\\t[CTRL]+[SHIFT]+M to trigger \\n\\t[CTRL]+[BACKSPACE] to clear';
+        div.innerText = '> KeyFlow Active (Hover to capture keys) \\n\\t[CTRL]+[SHIFT]+M to trigger';
 
         div.addEventListener('mouseenter', () => {
             window._kf_active = true;
@@ -690,9 +699,30 @@ def on_press(key):
             threading.Thread(target=process_and_play, args=(buffer_snapshot,), daemon=True).start()
             return # Don't add 'M' to the buffer when it's part of the trigger
 
-        # Check for CTRL + BACKSPACE to clear buffer
-        if ctrl_pressed and key == keyboard.Key.backspace:
+        # Check for CTRL + A to arm "select-all" pending state
+        a_pressed = hasattr(key, 'vk') and key.vk == 65
+        if ctrl_pressed and a_pressed:
+            state.ctrl_a_pending = True
+            return  # Don't add 'A' to buffer
+
+        # BACKSPACE while CTRL+A pending: clear entire buffer
+        if key == keyboard.Key.backspace and state.ctrl_a_pending:
+            state.ctrl_a_pending = False
             state.clear_buffer()
+            update_buffer_ui("")
+            print("Buffer cleared.")
+            return
+
+        # Check for CTRL + BACKSPACE to delete last word
+        if ctrl_pressed and key == keyboard.Key.backspace:
+            result = state.delete_last_word()
+            update_buffer_ui(result)
+            return
+
+        # Check for CTRL + DELETE to clear buffer
+        if ctrl_pressed and key == keyboard.Key.delete:
+            state.clear_buffer()
+            update_buffer_ui("")
             print("Buffer cleared.")
 
         result = state.update_buffer(key)
