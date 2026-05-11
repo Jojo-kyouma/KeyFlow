@@ -81,14 +81,14 @@ class KeyFlowState:
         self.current_playing_video_id = None
         self.max_candidates = 100
         self.num_songs = 10000
-        self.buffer_max_length = 300
+        self.buffer_max_length = 120
         self.text_buffer = ""
         self.pressed_keys = set()
         self.sync_in_progress = False
         self.last_key_time = time.time()
         self.config = DEFAULT_CONFIG.copy()
         self._load_config()
-        self.load_metadata()
+        self._load_metadata()
         self.fill_candidates()
 
     def _load_config(self):
@@ -99,6 +99,18 @@ class KeyFlowState:
             except Exception: pass
         else:
             self.save_config()
+
+    def _load_metadata(self):
+        if os.path.exists(DB_FILE):
+            try:
+                with open(DB_FILE, 'r') as f:
+                    data = json.load(f)
+                with self._lock:
+                    self.music_metadata_cache = data
+                    self.filter_songs()
+                return True
+            except Exception: pass
+        return False
 
     def save_config(self):
         with self._lock:
@@ -124,18 +136,6 @@ class KeyFlowState:
     def get_config(self, key):
         with self._lock:
             return self.config.get(key)
-
-    def load_metadata(self):
-        if os.path.exists(DB_FILE):
-            try:
-                with open(DB_FILE, 'r') as f:
-                    data = json.load(f)
-                with self._lock:
-                    self.music_metadata_cache = data
-                    self.filter_songs()
-                return True
-            except Exception: pass
-        return False
 
     def fill_candidates(self):
         with self._lock:
