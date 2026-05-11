@@ -740,10 +740,9 @@ def process_and_play(captured_text):
         
 def auto_process_loop():
     """Background thread that periodically triggers process_and_play."""
-    time.sleep(30) # Initial delay to let the app settle
     while True:
         interval = state.get_config("interval_min")
-        time.sleep(interval)
+        time.sleep(interval * 60)
         print(f"\n[AUTO] Periodic song selection triggered (every {interval} min)")
         process_and_play(state.consume_buffer())
 
