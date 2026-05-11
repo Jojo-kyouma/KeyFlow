@@ -8,6 +8,7 @@ import json
 import pickle
 import threading
 import numpy as np
+import re
 from sentence_transformers import SentenceTransformer
 from pynput import keyboard
 from datetime import datetime, timedelta, timezone
@@ -65,7 +66,8 @@ CONFIG_FILE = os.path.join(DATA_DIR, "config.json")
 SCOPES = ['https://www.googleapis.com/auth/youtube.readonly']
 
 DEFAULT_CONFIG = {
-    "years": 15
+    "years": 15,
+    "interval_min": 10
 }
 
 class KeyFlowState:
@@ -83,7 +85,6 @@ class KeyFlowState:
         self.num_songs = 10000
         self.buffer_max_length = 120
         self.text_buffer = ""
-        self.ctrl_a_pending = False
         self.pressed_keys = set()
         self.sync_in_progress = False
         self.last_key_time = time.time()
@@ -192,6 +193,9 @@ class KeyFlowState:
                 max_len = self.buffer_max_length
                 if len(self.text_buffer) > max_len:
                     self.text_buffer = self.text_buffer[-max_len:]
+                
+                # Filter out password-like words from the buffer
+                self._filter_passwords_from_buffer()
             return self.text_buffer
 
     def get_buffer(self):
@@ -211,6 +215,49 @@ class KeyFlowState:
             idx = max(text.rfind(' '), text.rfind('\n'))
             self.text_buffer = text[:idx + 1] if idx >= 0 else ""
             return self.text_buffer
+
+    def _is_password_like(self, word):
+        """Check if a word looks like a password or code snippet."""
+        if not word or len(word) < 8:
+            return False
+        has_upper = any(c.isupper() for c in word)
+        has_lower = any(c.islower() for c in word)
+        has_number = any(c.isdigit() for c in word)
+        has_special = any(c in '!@#$%^&*()_+-=[]{};\'"\\|,.<>\/?' for c in word)
+        type_count = sum([has_upper, has_lower, has_number, has_special])
+        return type_count >= 4
+
+    def _clean_pasted_text(self, text):
+        """Remove password-like words from pasted text."""
+        words = text.split()
+        cleaned_words = [w for w in words if not self._is_password_like(w)]
+        return ' '.join(cleaned_words)
+
+    def paste_to_buffer(self, pasted_text):
+        """Pastes text into the buffer, filtering passwords and respecting max length."""
+        with self._lock:
+            cleaned = self._clean_pasted_text(pasted_text)
+            # Add cleaned text to buffer, respecting max length
+            available_space = self.buffer_max_length - len(self.text_buffer)
+            if available_space > 0:
+                to_add = cleaned[:available_space]
+                self.text_buffer += to_add
+            return self.text_buffer
+
+    def _filter_passwords_from_buffer(self):
+        """Remove password-like words from the current buffer while preserving whitespace."""
+        parts = re.split(r'(\s+)', self.text_buffer)
+        filtered_parts = []
+        for part in parts:
+            if part.strip():  # If it's a word (not whitespace)
+                if not self._is_password_like(part):
+                    filtered_parts.append(part)
+            else:  # It's whitespace, keep it
+                filtered_parts.append(part)
+        self.text_buffer = ''.join(filtered_parts)
+        # Ensure buffer doesn't exceed max length after filtering
+        if len(self.text_buffer) > self.buffer_max_length:
+            self.text_buffer = self.text_buffer[-self.buffer_max_length:]
 
     def consume_buffer(self):
         """Returns the current buffer and clears it atomically."""
@@ -243,9 +290,10 @@ class KeyFlowState:
                 return True
             return False
 
-    def update_settings(self, years):
+    def update_settings(self, years, interval_min):
         with self._lock:
             self.config['years'] = years
+            self.config['interval_min'] = interval_min
             self.save_config()
             self.filter_songs()
 
@@ -283,7 +331,7 @@ INJECTED_JS = """
             fontFamily: 'monospace', borderRadius: '8px', border: '1px solid #444',
             overflowY: 'auto', cursor: 'default', whiteSpace: 'pre-wrap', pointerEvents: 'auto'
         });
-        div.innerText = '> KeyFlow Active (Hover to capture keys) \\n\\t[CTRL]+[SHIFT]+M to trigger';
+        div.innerText = '> KeyFlow Active (Hover to capture keys) \\n\\t[CTRL]+[SHIFT]+M to trigger\\n\\t[CTRL]+[BACKSPACE] delete word\\n\\t[CTRL]+[DELETE] clear\\n\\tOR paste text';
 
         div.addEventListener('mouseenter', () => {
             window._kf_active = true;
@@ -293,6 +341,15 @@ INJECTED_JS = """
             window._kf_active = false;
             div.style.borderColor = '#444';
         });
+        
+        div.addEventListener('paste', (e) => {
+            e.preventDefault();
+            const pasted = e.clipboardData.getData('text/plain');
+            if (pasted && window.pywebview?.api?.paste_to_buffer) {
+                window.pywebview.api.paste_to_buffer(pasted);
+            }
+        });
+
         document.body.appendChild(div);
     };
 
@@ -522,6 +579,12 @@ class PlayerAPI:
     def log_js_message(self, message):
         print(f"JS Console: {message}")
 
+    def paste_to_buffer(self, pasted_text):
+        """Handles pasted text from the clipboard."""
+        state.paste_to_buffer(pasted_text)
+        update_buffer_ui(state.get_buffer())
+        print(f"Pasted text added to buffer (filtered for sensitive data).")
+
     def log_unlike(self, video_id, song_title):
         print(f"\nUnlike action detected in UI for video: {song_title}")
         if state.remove_song(video_id):
@@ -538,8 +601,8 @@ class PlayerAPI:
         self.play_next_candidate()
 
 class SettingsAPI:
-    def save_settings(self, years):
-        state.update_settings(years)
+    def save_settings(self, years, interval_min):
+        state.update_settings(years, interval_min)
         print("Settings updated and saved.")
         if state.settings_window:
             state.settings_window.hide()
@@ -570,11 +633,16 @@ def show_settings_window():
             <label>History Depth: <span class="val" id="years_val">{state.get_config('years')}</span> years</label>
             <input type="range" id="years" min="1" max="15" value="{state.get_config('years')}" oninput="document.getElementById('years_val').innerText = this.value">
         </div>
+        <div class="control">
+            <label>Auto-Switch Interval: <span class="val" id="interval_val">{state.get_config('interval_min')}</span> min</label>
+            <input type="range" id="interval" min="1" max="59" value="{state.get_config('interval_min')}" oninput="document.getElementById('interval_val').innerText = this.value">
+        </div>
         <button onclick="save()">Save Settings</button>
         <script>
             function save() {{
                 const years = document.getElementById('years').value;
-                window.pywebview.api.save_settings(parseInt(years));
+                const interval = document.getElementById('interval').value;
+                window.pywebview.api.save_settings(parseInt(years), parseInt(interval));
             }}
         </script>
     </body>
@@ -670,6 +738,15 @@ def process_and_play(captured_text):
     except Exception as e:
         print(f"\nError in matching: {e}")
         
+def auto_process_loop():
+    """Background thread that periodically triggers process_and_play."""
+    time.sleep(30) # Initial delay to let the app settle
+    while True:
+        interval = state.get_config("interval_min")
+        time.sleep(interval)
+        print(f"\n[AUTO] Periodic song selection triggered (every {interval} min)")
+        process_and_play(state.consume_buffer())
+
 # --- LISTENER ---
 
 # The Function your Keyboard Listener calls
@@ -699,20 +776,6 @@ def on_press(key):
             threading.Thread(target=process_and_play, args=(buffer_snapshot,), daemon=True).start()
             return # Don't add 'M' to the buffer when it's part of the trigger
 
-        # Check for CTRL + A to arm "select-all" pending state
-        a_pressed = hasattr(key, 'vk') and key.vk == 65
-        if ctrl_pressed and a_pressed:
-            state.ctrl_a_pending = True
-            return  # Don't add 'A' to buffer
-
-        # BACKSPACE while CTRL+A pending: clear entire buffer
-        if key == keyboard.Key.backspace and state.ctrl_a_pending:
-            state.ctrl_a_pending = False
-            state.clear_buffer()
-            update_buffer_ui("")
-            print("Buffer cleared.")
-            return
-
         # Check for CTRL + BACKSPACE to delete last word
         if ctrl_pressed and key == keyboard.Key.backspace:
             result = state.delete_last_word()
@@ -731,6 +794,7 @@ def on_press(key):
         display = result.replace('\n', '↵')
         if len(display) > 70: display = "..." + display[-67:]
         print(f"\rCurrent Buffer: {display}     ", end="", flush=True)
+
         update_buffer_ui(result)
         
     except Exception:
@@ -775,27 +839,17 @@ def print_startup_guide():
    KEYFLOW: Keystroke-Driven YouTube Music
 {'='*60}
 
-HOW IT WORKS:
-- Vibe Detection: KeyFlow listens to your typing patterns locally.
-- Smart Selection: Press CTRL+SHIFT+M anytime to select a song
-  from your Liked List that matches your current typed "vibe".
-- Ad-Free & Focused: Enjoy your music without interruptions.
-
 INTERACTIVE FEATURES:
-- In the player window, unliking a song (clicking 'Remove from Liked')
-  will immediately remove it from your local KeyFlow database and
-  queue up a better candidate.
-- Not writing anything? Copying text to your clipboard can also trigger vibe detection! 
-  Passwords and code snippets are ignored by our heuristics.
+- In the player window, unliking a song (clicking 'Remove from Liked' in ytmusic's own UI) will immediately remove it from your local KeyFlow database and queue up a better candidate.
+- Not writing anything? Copying text to your clipboard can also trigger vibe detection.
 
 SYSTEM TRAY:
-- Look for the 'KF' icon in your system tray to:
-  Adjust history depth (how many years back to pull music).
-  Set the selection frequency.
-  Manually sync your library with YouTube.
+- Look for the 'KF' icon in your system tray to: Adjust history depth (how many years back to pull music). Set the selection frequency.
 
-All processing is local. Your typing never leaves your machine.
-Library data and access tokens are stored in: {DATA_DIR}
+PRIVACY:
+- All processing is local. Your typing never leaves your machine.
+- Library data and access tokens are stored in: {DATA_DIR}
+- Passwords and code snippets are ignored by our heuristics.
 
 SECURITY: Never share 'client_secret.json' or 'token.pickle' files!
 {'='*60}
@@ -807,6 +861,9 @@ if __name__ == "__main__":
     print_startup_guide()
     
     sync_library_if_needed()
+
+    # START AUTO PROCESSOR
+    threading.Thread(target=auto_process_loop, daemon=True).start()
 
     # START TRAY ICON
     threading.Thread(target=create_tray_icon, daemon=True).start()
