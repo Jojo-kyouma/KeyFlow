@@ -2,9 +2,9 @@
 
 ## Philosophy
 
-KeyFlow is a structural intervention. It bridges the gap between massive media databases and individual autonomy by reintroducing manual control into the discovery loop. By shifting the selection logic from a black-box algorithm to a user-driven context (the live buffer), the app transforms digital consumption from a passive habit into a deliberate, growth-oriented act.
+Feel like you can't properly interact with the Youtube algorithm to make music discovery within Youtube Music meaningful?
 
-A marginal increase in agency within these ecosystems yields a noticable increase in emotional value.
+Despair no more and try KeyFlow now!
 
 ---
 
