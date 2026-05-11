@@ -1,14 +1,15 @@
 #  KeyFlow
 
-## Philosophy
+### About KeyFlow
+KeyFlow is designed to transform your music discovery experience on YouTube Music, putting you back in control. It offers a uniquely personalized and ad-minimized listening environment.
 
-Feel like you can't properly interact with the Youtube algorithm to make music discovery within Youtube Music meaningful?
+Instead of passively consuming algorithm-driven playlists, KeyFlow actively taps into your keystroke buffer to understand your current context and "vibe." This allows it to intelligently suggest and play songs from your own YouTube "Liked" library that resonate with what you're doing. It's an improved way to interact with YouTube's vast music algorithm, helping you discover better-suited songs faster, based on your real-time activity.
 
-Despair no more and try KeyFlow now!
+While YouTube Music itself may still serve ads, KeyFlow includes functionality to automatically mute these interruptions, providing a smoother, more focused listening experience. It's about making your music truly yours, personalized by your actions, and delivered without distraction.
 
 ---
 
-###  How it works
+###  How it works (Technically)
 * Uses OAuth service to read your Youtube Liked List and filter out non-music.
 * Picks appropriate liked songs depending on **context**: your keyboard activity.
 * **Prerequisites:** You must have [Git](https://git-scm.com/) and [uv](https://docs.astral.sh/uv/) installed on your system.
