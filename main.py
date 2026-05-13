@@ -89,6 +89,8 @@ class KeyFlowState:
         self.sync_in_progress = False
         self.last_key_time = time.time()
         self.config = DEFAULT_CONFIG.copy()
+        self.selection_event = threading.Event()
+        self.last_selection_time = time.time()
         self._load_config()
         self._load_metadata()
         self.fill_candidates()
@@ -296,6 +298,41 @@ class KeyFlowState:
             self.config['interval_min'] = interval_min
             self.save_config()
             self.filter_songs()
+            self.selection_event.set()
+
+    def reset_selection_timer(self):
+        """Resets the periodic timer base to now. Used by manual triggers."""
+        with self._lock:
+            self.last_selection_time = time.time()
+            self.selection_event.set()
+
+    def wait_for_next_selection(self):
+        """
+        Blocks until the next periodic selection is due. 
+        Returns True when it's time to select a song.
+        """
+        while True:
+            with self._lock:
+                interval_sec = self.config.get("interval_min", 10) * 60
+                now = time.time()
+                elapsed = now - self.last_selection_time
+                time_to_wait = interval_sec - elapsed
+            
+            if time_to_wait <= 0:
+                with self._lock:
+                    self.last_selection_time = time.time()
+                return True
+            
+            # Wait for remaining time or event signal (interruptible)
+            if self.selection_event.wait(timeout=time_to_wait):
+                # Interrupted by event.set() (manual trigger or settings change)
+                self.selection_event.clear()
+                continue # Re-calculate time_to_wait
+            else:
+                # Timeout reached naturally
+                with self._lock:
+                    self.last_selection_time = time.time()
+                return True
 
     def check_and_prepare_song_update(self, video_id):
         with self._lock:
@@ -741,10 +778,10 @@ def process_and_play(captured_text):
 def auto_process_loop():
     """Background thread that periodically triggers process_and_play."""
     while True:
-        interval = state.get_config("interval_min")
-        time.sleep(interval * 60)
-        print(f"\n[AUTO] Periodic song selection triggered (every {interval} min)")
-        process_and_play(state.consume_buffer())
+        if state.wait_for_next_selection():
+            interval = state.get_config("interval_min")
+            print(f"\n[AUTO] Periodic song selection triggered (every {interval} min)")
+            process_and_play(state.consume_buffer())
 
 # --- LISTENER ---
 
@@ -772,6 +809,7 @@ def on_press(key):
             # Trigger the vibe search with whatever is in the buffer
             buffer_snapshot = state.consume_buffer()
             print(f"\n[TRIGGER] Manual song selection activated via CTRL+SHIFT+M")
+            state.reset_selection_timer()
             threading.Thread(target=process_and_play, args=(buffer_snapshot,), daemon=True).start()
             return # Don't add 'M' to the buffer when it's part of the trigger
 
@@ -876,5 +914,5 @@ if __name__ == "__main__":
 
 """
 TODO: 
-User should be able to choose between Youtube, Spotify, and Apple Music. Currently only a Youtube pipeline is implemented.
+User should be able to choose between Youtube, Spotify, TIDAL, Apple Music and other platforms. Currently only a Youtube pipeline is implemented.
 """
