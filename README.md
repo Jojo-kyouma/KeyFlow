@@ -2,7 +2,6 @@
 
 ### About KeyFlow
 Proof-of-concept of Agency in discovery loop.
----
 
 ###  How it works (Technically)
 * Uses OAuth service to read your Youtube Liked List and filter out non-music.
