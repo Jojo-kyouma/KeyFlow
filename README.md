@@ -1,7 +1,7 @@
 #  KeyFlow
 Agency in the Youtube Music discovery loop (Proof-of-Concept).
 
-###  How it works (Technically)
+####  How it works (technically)
 * Uses OAuth service to read your Youtube Liked List and filter out non-music.
 * Picks appropriate liked songs depending on **context**: your keyboard activity.
 * **Prerequisites:** You must have [Git](https://git-scm.com/) and [uv](https://docs.astral.sh/uv/) installed on your system.
