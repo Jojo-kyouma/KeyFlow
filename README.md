@@ -1,6 +1,4 @@
 #  KeyFlow
-
-### What?
 Proof-of-concept of Agency in discovery loop.
 
 ###  How it works (Technically)
